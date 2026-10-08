@@ -1,0 +1,23 @@
+{
+  "content_preservation": {
+    "n_pairs": 300,
+    "ssim_mean": 0.0278,
+    "ssim_std": 0.0102,
+    "psnr_mean": 1.749,
+    "psnr_std": 0.1165
+  },
+  "shape_preservation": {
+    "n_pairs": 300,
+    "n_skipped": 0,
+    "dice_mean": 0.773,
+    "dice_std": 0.0363,
+    "iou_mean": 0.6314,
+    "iou_std": 0.0468,
+    "d_eccentricity_mean": 0.2724,
+    "d_eccentricity_std": 0.1636,
+    "d_solidity_mean": 0.0081,
+    "d_solidity_std": 0.0305,
+    "area_ratio_mean": 0.9055,
+    "area_ratio_std": 0.1878
+  }
+}

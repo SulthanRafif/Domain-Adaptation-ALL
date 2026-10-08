@@ -1,0 +1,2 @@
+n_pairs,ssim_mean,ssim_std,ssim_cell_mean,ssim_cell_std,psnr_mean,psnr_std
+600,0.4967,0.0698,0.3578,0.1091,8.4041,1.2325

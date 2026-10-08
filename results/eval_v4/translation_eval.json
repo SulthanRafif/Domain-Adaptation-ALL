@@ -1,0 +1,34 @@
+{
+  "content_preservation": {
+    "n_pairs": 600,
+    "ssim_mean": 0.0361,
+    "ssim_std": 0.012,
+    "ssim_cell_mean": 0.1663,
+    "ssim_cell_std": 0.0222,
+    "psnr_mean": 1.4356,
+    "psnr_std": 0.0985
+  },
+  "shape_preservation": {
+    "n_pairs": 600,
+    "n_skipped": 0,
+    "dice_mean": 0.6943,
+    "dice_std": 0.0765,
+    "iou_mean": 0.5368,
+    "iou_std": 0.0865,
+    "d_eccentricity_mean": 0.2858,
+    "d_eccentricity_std": 0.15,
+    "d_solidity_mean": -0.1462,
+    "d_solidity_std": 0.0276,
+    "area_ratio_mean": 1.7361,
+    "area_ratio_std": 0.4867
+  },
+  "tsne": {
+    "n_points": 1800,
+    "perplexity": 30.0,
+    "sets": [
+      "source_asli",
+      "source_translasi",
+      "target"
+    ]
+  }
+}
