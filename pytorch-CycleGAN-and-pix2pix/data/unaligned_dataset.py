@@ -1,8 +1,9 @@
 import os
-from data.base_dataset import BaseDataset, get_transform
+from data.base_dataset import BaseDataset, get_params, get_transform
 from data.image_folder import make_dataset
 from PIL import Image
 import random
+import torchvision.transforms as transforms
 
 
 class UnalignedDataset(BaseDataset):
@@ -33,8 +34,18 @@ class UnalignedDataset(BaseDataset):
         btoA = self.opt.direction == "BtoA"
         input_nc = self.opt.output_nc if btoA else self.opt.input_nc  # get the number of channels of input image
         output_nc = self.opt.input_nc if btoA else self.opt.output_nc  # get the number of channels of output image
-        self.transform_A = get_transform(self.opt, grayscale=(input_nc == 1))
+        self.grayscale_A = input_nc == 1
+        self.transform_A = get_transform(self.opt, grayscale=self.grayscale_A)
         self.transform_B = get_transform(self.opt, grayscale=(output_nc == 1))
+        self.use_source_masks = (self.opt.isTrain and
+                                 getattr(opt, 'lambda_spatial_mask', 0.0) > 0)
+        if self.use_source_masks:
+            self.dir_A_mask = os.path.join(opt.dataroot, opt.phase + "A_mask")
+            if not os.path.isdir(self.dir_A_mask):
+                raise FileNotFoundError(
+                    f"Loss mask spasial aktif, tetapi folder mask tidak ada: "
+                    f"{self.dir_A_mask}. Buat trainA_mask dengan nama berkas "
+                    "yang sama persis dengan trainA.")
 
     def __getitem__(self, index):
         """Return a data point and its metadata information.
@@ -56,11 +67,33 @@ class UnalignedDataset(BaseDataset):
         B_path = self.B_paths[index_B]
         A_img = Image.open(A_path).convert("RGB")
         B_img = Image.open(B_path).convert("RGB")
-        # apply image transformation
-        A = self.transform_A(A_img)
+        # Gunakan parameter transformasi yang sama untuk citra A dan masknya,
+        # agar crop/flip tidak menggeser label spasial.
+        if self.use_source_masks:
+            params_A = get_params(self.opt, A_img.size)
+            transform_A = get_transform(
+                self.opt, params=params_A, grayscale=self.grayscale_A)
+            mask_path = os.path.join(self.dir_A_mask, os.path.basename(A_path))
+            if not os.path.isfile(mask_path):
+                raise FileNotFoundError(
+                    f"Mask source tidak ditemukan untuk {A_path}: {mask_path}")
+            mask_img = Image.open(mask_path).convert("L")
+            transform_mask = get_transform(
+                self.opt, params=params_A, grayscale=False,
+                method=transforms.InterpolationMode.NEAREST, convert=False)
+            A_mask = transforms.ToTensor()(transform_mask(mask_img))
+            A_mask = (A_mask >= 0.5).float()
+        else:
+            A_mask = None
+            A = self.transform_A(A_img)
+        if self.use_source_masks:
+            A = transform_A(A_img)
         B = self.transform_B(B_img)
 
-        return {"A": A, "B": B, "A_paths": A_path, "B_paths": B_path}
+        result = {"A": A, "B": B, "A_paths": A_path, "B_paths": B_path}
+        if A_mask is not None:
+            result["A_mask"] = A_mask
+        return result
 
     def __len__(self):
         """Return the total number of images in the dataset.

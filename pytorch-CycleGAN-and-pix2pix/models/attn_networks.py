@@ -72,18 +72,21 @@ class AttentionGate(nn.Module):
         self.conv = nn.Conv2d(2, 1, kernel_size,
                               padding=kernel_size // 2, bias=False)
 
-    def forward(self, gen_out, ref):
+    def forward(self, gen_out, ref, return_logits=False):
         """gen_out : G(s), keluaran generator            (B x 3 x H x W)
            ref     : citra rujukan untuk background, yaitu s (B x 3 x H x W)
            return  : (s_a, s_translated)
         """
         avg_out = torch.mean(gen_out, dim=1, keepdim=True)
         max_out, _ = torch.max(gen_out, dim=1, keepdim=True)
-        s_a = torch.sigmoid(self.conv(torch.cat([avg_out, max_out], dim=1)))
+        logits = self.conv(torch.cat([avg_out, max_out], dim=1))
+        s_a = torch.sigmoid(logits)
 
         s_f = s_a * gen_out
         bg = gen_out if self.bg_source == 'generated' else ref
         s_b = (1.0 - s_a) * bg
+        if return_logits:
+            return s_a, s_f + s_b, logits
         return s_a, s_f + s_b
 
 
@@ -161,16 +164,24 @@ class AttnResnetGenerator(nn.Module):
             *[ResnetBlock(ngf * 4, norm_layer, use_bias) for _ in range(n_blocks)])
 
         # ---------------- decoder ----------------
+        # self.dec0 = nn.Sequential(
+        #     nn.ConvTranspose2d(ngf * 4, ngf * 2, 3, stride=2, padding=1,
+        #                        output_padding=1, bias=use_bias),
+        #     norm_layer(ngf * 2), nn.ReLU(True))
+
         self.dec0 = nn.Sequential(
-            nn.ConvTranspose2d(ngf * 4, ngf * 2, 3, stride=2, padding=1,
-                               output_padding=1, bias=use_bias),
-            norm_layer(ngf * 2), nn.ReLU(True))
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(ngf * 4, ngf * 2, 3, stride=1, padding=1,
+                bias=use_bias),
+            norm_layer(ngf * 2),
+            nn.ReLU(True),
+        )
         self.sa3 = SpatialAttention(attn_kernel)
 
         dec1_in = ngf * 4 if use_skip else ngf * 2     # concat skip 1
         self.dec1 = nn.Sequential(
-            nn.ConvTranspose2d(dec1_in, ngf, 3, stride=2, padding=1,
-                               output_padding=1, bias=use_bias),
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(dec1_in, ngf, 3, stride=1, padding=1, bias=use_bias),
             norm_layer(ngf), nn.ReLU(True))
         self.sa4 = SpatialAttention(attn_kernel)
 

@@ -49,6 +49,9 @@ class AttnCycleGANModel(BaseModel):
                                 help='penahan kolaps mask. 0 = mati (setia pada '
                                      'paper). Aktifkan (mis. 1.0) HANYA bila '
                                      'diagnosis menunjukkan s_a kolaps.')
+            parser.add_argument('--lambda_spatial_mask', type=float, default=0.0,
+                                help='bobot supervisi spasial mask A_S dengan '
+                                     'label biner trainA_mask. 0 = nonaktif.')
             parser.add_argument('--mask_min', type=float, default=0.15,
                                 help='batas BAWAH proporsi wilayah yang ditandai '
                                      'mask; dipakai oleh --lambda_mask')
@@ -71,6 +74,8 @@ class AttnCycleGANModel(BaseModel):
         self.loss_names = ['G', 'AGAN', 'cycle', 'pixel', 'D_T']
         if opt.isTrain and getattr(opt, 'lambda_mask', 0.0) > 0:
             self.loss_names.append('mask')
+        if opt.isTrain and getattr(opt, 'lambda_spatial_mask', 0.0) > 0:
+            self.loss_names.append('spatial_mask')
         if opt.isTrain and opt.use_D_S:
             self.loss_names.append('D_S')
 
@@ -143,13 +148,25 @@ class AttnCycleGANModel(BaseModel):
         self.real_S = (input['A' if AtoB else 'B']).to(self.device)
         self.real_T = (input['B' if AtoB else 'A']).to(self.device)
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
+        if self.isTrain and getattr(self.opt, 'lambda_spatial_mask', 0.0) > 0:
+            if not AtoB:
+                raise ValueError('--lambda_spatial_mask memerlukan --direction AtoB, '
+                                 'karena crop_mask dipasangkan dengan domain A/source.')
+            if 'A_mask' not in input:
+                raise KeyError('A_mask tidak dimuat. Pastikan trainA_mask tersedia '
+                               'dan --lambda_spatial_mask lebih besar dari 0.')
+            self.real_S_mask = input['A_mask'].to(self.device)
 
     # ------------------------------------------------------------------
     def forward(self):
         """Algoritma 4 baris 2-5."""
         # arah maju: s -> G(s) -> s'
         self.raw_ST = self.netG_ST(self.real_S)                    # G(s)
-        self.attn_S, self.fake_T = self.netA_S(self.raw_ST, self.real_S)   # s_a, s'
+        if self.isTrain and getattr(self.opt, 'lambda_spatial_mask', 0.0) > 0:
+            self.attn_S, self.fake_T, self.attn_logits_S = self.netA_S(
+                self.raw_ST, self.real_S, return_logits=True)
+        else:
+            self.attn_S, self.fake_T = self.netA_S(self.raw_ST, self.real_S)
         self.attn_S_vis = self.attn_S * 2.0 - 1.0                  # [0,1] -> [-1,1]
 
         # arah balik untuk cycle: s' -> F(s') -> s''
@@ -220,6 +237,22 @@ class AttnCycleGANModel(BaseModel):
         self.loss_G = (l_gan * self.loss_AGAN +
                        l_cyc * self.loss_cycle +
                        l_pix * self.loss_pixel)
+
+        # Supervisi spasial dari crop_mask source. BCE logits menghindari
+        # saturasi sigmoid; Dice membantu ketika foreground mask lebih kecil
+        # daripada background.
+        lsm = getattr(self.opt, 'lambda_spatial_mask', 0.0)
+        if lsm > 0:
+            target = self.real_S_mask
+            bce = torch.nn.functional.binary_cross_entropy_with_logits(
+                self.attn_logits_S, target)
+            prob = torch.sigmoid(self.attn_logits_S)
+            dims = (1, 2, 3)
+            intersection = (prob * target).sum(dim=dims)
+            dice = 1.0 - ((2.0 * intersection + 1.0) /
+                          (prob.sum(dim=dims) + target.sum(dim=dims) + 1.0))
+            self.loss_spatial_mask = bce + dice.mean()
+            self.loss_G = self.loss_G + lsm * self.loss_spatial_mask
 
         # --- penahan kolaps mask (opsional, di luar paper) ---
         # L_pixel = ||s_a * (s - G(s))||_1, sehingga s_a -> 0 memuaskannya secara

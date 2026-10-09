@@ -6,6 +6,7 @@ Menghasilkan DUA struktur sekaligus dari satu perintah:
 
   <out>/gan/                 <- format repo junyanz, TANPA label
       trainA/                   citra source (untuk melatih generator)
+      trainA_mask/              mask source opsional, sejajar dengan trainA
       trainB/                   sel target subset ADAPTASI
       testA/                    sampel source untuk inspeksi visual
       testB/                    sampel target untuk inspeksi visual
@@ -219,6 +220,38 @@ def place(items, dest, by_class=False, link=False):
     return n
 
 
+def place_source_with_masks(items, mask_root, image_dest, mask_dest, link=False):
+    """Tempatkan citra source dan crop_mask dengan basename yang tetap berpasangan."""
+    mask_root = Path(mask_root)
+    image_dest, mask_dest = Path(image_dest), Path(mask_dest)
+    image_dest.mkdir(parents=True, exist_ok=True)
+    mask_dest.mkdir(parents=True, exist_ok=True)
+    used_names = set()
+    for cls, _group, src in items:
+        mask_src = mask_root / cls / src.name
+        if not mask_src.is_file():
+            raise FileNotFoundError(
+                f"Mask source tidak ditemukan untuk {src}: {mask_src}. "
+                "Pastikan --source-mask-root menunjuk ke crop_mask.")
+        name = src.name
+        if name in used_names:
+            name = f"{src.stem}__{abs(hash(str(src))) % 9999:04d}{src.suffix}"
+        used_names.add(name)
+        _place_one(src, image_dest / name, link)
+        _place_one(mask_src, mask_dest / name, link)
+    return len(items)
+
+
+def _place_one(src, dest, link):
+    if link:
+        try:
+            dest.symlink_to(Path(src).resolve())
+        except OSError:
+            shutil.copy2(src, dest)
+    else:
+        shutil.copy2(src, dest)
+
+
 def report(title, items):
     c = Counter(i[0] for i in items)
     g = len(set(i[1] for i in items))
@@ -238,6 +271,9 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument('--source-root', required=True,
                     help='folder source dengan subfolder per kelas')
+    ap.add_argument('--source-mask-root', default=None,
+                    help='opsional: folder crop_mask dengan subfolder kelas; '
+                         'jika diisi, buat gan/trainA_mask berpasangan')
     ap.add_argument('--source-id-mode', default='cnmc',
                     choices=['cnmc', 'allidb', 'filename'],
                     help='cara membaca ID subjek/lapang dari nama berkas')
@@ -294,7 +330,12 @@ def main():
     rows.append(report('target tes -> clf/test', tgt_test))
 
     # --- tulis struktur GAN (tanpa label)
-    place(src_bal, out / 'gan' / 'trainA', link=args.symlink)
+    if args.source_mask_root:
+        place_source_with_masks(src_bal, args.source_mask_root,
+                                out / 'gan' / 'trainA',
+                                out / 'gan' / 'trainA_mask', link=args.symlink)
+    else:
+        place(src_bal, out / 'gan' / 'trainA', link=args.symlink)
     place(gan_B, out / 'gan' / 'trainB', link=args.symlink)
     place(rng.sample(src_bal, min(args.n_preview, len(src_bal))),
           out / 'gan' / 'testA', link=args.symlink)
