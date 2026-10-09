@@ -10,6 +10,8 @@ dependencies:
   - pytorch-cuda=12.1
   - numpy=1.24.3
   - scikit-image
+  - scikit-learn
+  - opencv
   - pip
   - pip:
       - dominate>=2.8.0
