@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <title>Attention-CycleGAN validation</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #202124; background: #f5f6f8; }
+    body { margin: 0 auto; max-width: 1180px; padding: 24px; }
+    h1 { font-size: 1.5rem; margin-bottom: 4px; }
+    .muted { color: #626a73; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 12px; margin: 20px 0; }
+    .card, .panel { background: white; border: 1px solid #e0e3e8; border-radius: 10px; padding: 16px; }
+    .value { font-size: 1.5rem; font-weight: 650; margin-top: 5px; }
+    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+    canvas { width: 100%; height: 300px; }
+    #preview { width: 100%; height: auto; image-rendering: auto; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; background: white; }
+    th, td { text-align: right; border-bottom: 1px solid #e8eaed; padding: 8px; font-size: .9rem; }
+    th:first-child, td:first-child { text-align: left; }
+    .status { padding: 6px 10px; border-radius: 20px; display: inline-block; background: #e8f0fe; }
+    @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } body { padding: 14px; } }
+  </style>
+</head>
+<body>
+  <h1>Attention-CycleGAN · evaluasi validasi</h1>
+  <div class="muted">Pembaruan otomatis setiap 5 detik. Dashboard hanya membaca hasil evaluasi yang disimpan training.</div>
+  <div class="cards">
+    <div class="card">Epoch dievaluasi<div class="value" id="epoch">—</div></div>
+    <div class="card">Skor gaya (lebih kecil lebih dekat)<div class="value" id="score">—</div></div>
+    <div class="card">Dice bentuk<div class="value" id="dice">—</div></div>
+    <div class="card">IoU attention / crop mask<div class="value" id="attn">—</div></div>
+    <div class="card">Epoch terbaik<div class="value" id="best">—</div></div>
+    <div class="card">Early stopping<div class="value" id="patience">—</div></div>
+  </div>
+  <div class="grid">
+    <section class="panel"><h2>Riwayat metrik</h2><canvas id="chart" width="850" height="320"></canvas></section>
+    <section class="panel"><h2>Contoh tetap</h2><img id="preview" alt="Contoh source, fake_T, dan attention"><div id="updated" class="muted"></div></section>
+  </div>
+  <section class="panel" style="margin-top:12px"><h2>Nilai per checkpoint</h2>
+    <div style="overflow:auto"><table><thead><tr><th>Epoch</th><th>Skor gaya</th><th>Lab L</th><th>Lab a</th><th>Lab b</th><th>LBP</th><th>Dice</th><th>Attention IoU</th><th>Terbaik</th></tr></thead><tbody id="rows"></tbody></table></div>
+  </section>
+<script>
+const fmt = x => x == null || !Number.isFinite(Number(x)) ? '—' : Number(x).toFixed(4);
+async function refresh() {
+  try {
+    const stamp = Date.now();
+    const [m, csv] = await Promise.all([
+      fetch('metrics.json?t=' + stamp, {cache:'no-store'}).then(r => r.ok ? r.json() : null),
+      fetch('history.csv?t=' + stamp, {cache:'no-store'}).then(r => r.ok ? r.text() : '')
+    ]);
+    if (!m) return;
+    document.getElementById('epoch').textContent = m.epoch;
+    document.getElementById('score').textContent = fmt(m.style_score);
+    document.getElementById('dice').textContent = fmt(m.shape_preservation?.dice?.mean);
+    document.getElementById('attn').textContent = fmt(m.attention_iou);
+    document.getElementById('best').textContent = m.early_stopping?.best_epoch ?? '—';
+    const es = m.early_stopping || {};
+    document.getElementById('patience').textContent = es.enabled ? `${es.bad_checks}/${es.patience}` : 'nonaktif';
+    document.getElementById('updated').textContent = 'Update: ' + (m.timestamp || '—');
+    document.getElementById('preview').src = 'preview.png?t=' + stamp;
+    const lines = csv.trim().split(/\r?\n/).slice(1).filter(Boolean).map(line => line.split(','));
+    document.getElementById('rows').innerHTML = lines.slice(-30).reverse().map(c => `<tr><td>${c[0]}</td><td>${fmt(c[1])}</td><td>${fmt(c[2])}</td><td>${fmt(c[3])}</td><td>${fmt(c[4])}</td><td>${fmt(c[5])}</td><td>${fmt(c[6])}</td><td>${fmt(c[8])}</td><td>${c[9] === 'True' ? '✓' : ''}</td></tr>`).join('');
+    draw(lines);
+  } catch (e) { console.warn('Dashboard refresh:', e); }
+}
+function draw(rows) {
+  const canvas = document.getElementById('chart'), ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (!rows.length) return;
+  const data = rows.map(c => ({epoch:+c[0], style:+c[1], dice:+c[6]})).filter(x => Number.isFinite(x.style));
+  const pad=42, w=canvas.width-pad*2, h=canvas.height-pad*2;
+  const minX=Math.min(...data.map(d=>d.epoch)), maxX=Math.max(...data.map(d=>d.epoch));
+  const maxY=Math.max(1.2,...data.map(d=>d.style));
+  ctx.strokeStyle='#c9ced6'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(pad,pad); ctx.lineTo(pad,pad+h); ctx.lineTo(pad+w,pad+h); ctx.stroke();
+  const point=(d,key,scale)=>[pad+(d.epoch-minX)/Math.max(1,maxX-minX)*w,pad+h-(d[key]/scale)*h];
+  for (const [key,color] of [['style','#2670d8'],['dice','#21a179']]) {
+    const vals=data.filter(d=>Number.isFinite(d[key])); if(!vals.length) continue;
+    const scale=key==='style'?maxY:1;
+    ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=2; ctx.beginPath();
+    vals.forEach((d,i)=>{const [x,y]=point(d,key,scale); if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}); ctx.stroke();
+    vals.forEach(d=>{const [x,y]=point(d,key,scale);ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();});
+  }
+  ctx.fillStyle='#2670d8';ctx.fillText('Skor gaya',pad+8,18);ctx.fillStyle='#21a179';ctx.fillText('Dice',pad+90,18);
+  ctx.fillStyle='#555';ctx.fillText(String(minX),pad,canvas.height-10);ctx.fillText(String(maxX),pad+w-20,canvas.height-10);
+}
+refresh(); setInterval(refresh,5000);
+</script>
+</body>
+</html>

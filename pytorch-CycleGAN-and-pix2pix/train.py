@@ -20,11 +20,18 @@ See frequently asked questions at: https://github.com/junyanz/pytorch-CycleGAN-a
 """
 
 import time
+import sys
+from pathlib import Path
+import torch.distributed as dist
 from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
 from util.visualizer import Visualizer
 from util.util import init_ddp, cleanup_ddp
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+from eval.live_training import LiveTrainingEvaluator
 
 
 if __name__ == "__main__":
@@ -37,6 +44,33 @@ if __name__ == "__main__":
     model = create_model(opt)  # create a model given opt.model and other options
     model.setup(opt)  # regular setup: load and print networks; create schedulers
     visualizer = Visualizer(opt)  # create a visualizer that display/save images and plots
+    eval_source = getattr(opt, "eval_source_dir", "")
+    eval_target = getattr(opt, "eval_target_dir", "")
+    if bool(eval_source) != bool(eval_target):
+        raise ValueError("Isi --eval_source_dir dan --eval_target_dir bersama-sama.")
+    if opt.eval_every < 1:
+        raise ValueError("--eval_every harus >= 1.")
+    if opt.early_stop_patience < 0:
+        raise ValueError("--early_stop_patience harus >= 0.")
+    if not 0.0 <= opt.early_stop_min_dice <= 1.0:
+        raise ValueError("--early_stop_min_dice harus berada pada rentang [0, 1].")
+    if not 0.0 <= opt.early_stop_min_attention_iou <= 1.0:
+        raise ValueError("--early_stop_min_attention_iou harus berada pada rentang [0, 1].")
+    if opt.early_stop_min_delta < 0:
+        raise ValueError("--early_stop_min_delta harus >= 0.")
+    if opt.eval_max_images < 0:
+        raise ValueError("--eval_max_images harus >= 0.")
+    if opt.early_stop_patience > 0 and not eval_source:
+        raise ValueError("Early stopping memerlukan --eval_source_dir dan --eval_target_dir.")
+    evaluator = None
+    if eval_source:
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            raise RuntimeError("Live evaluation/early stopping saat ini hanya mendukung satu proses training.")
+        if opt.early_stop_min_attention_iou > 0 and not opt.eval_source_mask_dir:
+            raise ValueError("--early_stop_min_attention_iou > 0 memerlukan --eval_source_mask_dir.")
+        evaluator = LiveTrainingEvaluator(opt)
+        print(f"Live validation aktif: setiap {opt.eval_every} epoch; "
+              f"dashboard data: {evaluator.dashboard_dir}")
     total_iters = 0  # the total number of training iterations
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
         epoch_start_time = time.time()  # timer for entire epoch
@@ -83,5 +117,13 @@ if __name__ == "__main__":
             model.save_networks(epoch)
 
         print(f"End of epoch {epoch} / {opt.n_epochs + opt.n_epochs_decay} \t Time Taken: {time.time() - epoch_start_time:.0f} sec")
+        if evaluator is not None and epoch % opt.eval_every == 0:
+            should_stop = evaluator.evaluate(model, epoch)
+            if should_stop:
+                print(f"Early stopping pada epoch {epoch}; checkpoint terbaik "
+                      f"epoch {evaluator.best_epoch} disimpan dengan suffix 'best'.")
+                model.save_networks("latest")
+                model.save_networks(epoch)
+                break
 
     cleanup_ddp()

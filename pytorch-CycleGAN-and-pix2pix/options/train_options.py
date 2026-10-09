@@ -31,5 +31,29 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--lr_policy', type=str, default='linear', help='learning rate policy. [linear | step | plateau | cosine]')
         parser.add_argument('--lr_decay_iters', type=int, default=50, help='multiply by a gamma every lr_decay_iters iterations')
 
+        # Deterministic validation, live metrics dashboard, and optional early stopping.
+        parser.add_argument('--eval_source_dir', type=str, default='',
+                            help='source validation images; leave empty to disable live evaluation')
+        parser.add_argument('--eval_target_dir', type=str, default='',
+                            help='target validation/reference images')
+        parser.add_argument('--eval_source_mask_dir', type=str, default='',
+                            help='optional source validation crop masks for attention IoU')
+        parser.add_argument('--eval_every', type=int, default=5,
+                            help='run validation every N epochs')
+        parser.add_argument('--eval_max_images', type=int, default=128,
+                            help='fixed deterministic validation cap per domain; 0 uses all')
+        parser.add_argument('--eval_dashboard_dir', type=str, default='',
+                            help='dashboard data directory; default is checkpoints/<name>/evaluation_dashboard')
+        parser.add_argument('--early_stop_patience', type=int, default=0,
+                            help='stop after this many validation checks without a new best; 0 disables stopping')
+        parser.add_argument('--early_stop_start_epoch', type=int, default=30,
+                            help='do not count early-stop patience before this epoch')
+        parser.add_argument('--early_stop_min_delta', type=float, default=0.01,
+                            help='minimum absolute style-score improvement to reset patience')
+        parser.add_argument('--early_stop_min_dice', type=float, default=0.70,
+                            help='minimum source-to-translated mask Dice for a checkpoint to be eligible as best')
+        parser.add_argument('--early_stop_min_attention_iou', type=float, default=0.0,
+                            help='optional minimum attention-to-crop-mask IoU; 0 disables this guard')
+
         self.isTrain = True
         return parser
